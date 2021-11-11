@@ -3,66 +3,33 @@
 // two columns named "a" and "b".  The table as 10 rows with fixed integer
 // values. Usage example:
 //
-//     SELECT rowid, a, b FROM templatevtab;
+// sqlite> .load ./templatevtab
+// sqlite> SELECT rowid, a, b FROM templatevtab;
+// 1|1001|2001
+// 2|1002|2002
+// 3|1003|2003
+// 4|1004|2004
+// 5|1005|2005
+// 6|1006|2006
+// 7|1007|2007
+// 8|1008|2008
+// 9|1009|2009
 //
 
 const std = @import("std");
 const assert = std.debug.assert;
-const c = @cImport(@cInclude("sqlite3ext.h"));
+const c = @import("./c.zig").c;
+const sqlite3_allocator = @import("./sqlite3_allocator.zig");
 
 // sqlite3_api has a meaningful value once 
 // this library is loaded by sqlite3 and
 // sqlite3_series_init is called.
 var sqlite3_api: *c.sqlite3_api_routines = undefined;
 
-// Copied from raw_c_allocator.
-// Asserts allocations are within `@alignOf(std.c.max_align_t)` and directly calls
-// `malloc`/`free`. Does not attempt to utilize `malloc_usable_size`.
-// This allocator is safe to use as the backing allocator with
-// `ArenaAllocator` for example and is more optimal in such a case
-// than `c_allocator`.
-const Allocator = std.mem.Allocator;
-pub const allocator = &allocator_state;
-var allocator_state = Allocator{
-    .allocFn = alloc,
-    .resizeFn = resize,
-};
-
-fn alloc(
-    self: *Allocator,
-    len: usize,
-    ptr_align: u29,
-    len_align: u29,
-    ret_addr: usize,
-) Allocator.Error![]u8 {
-    _ = self;
-    _ = len_align;
-    _ = ret_addr;
-    assert(ptr_align <= @alignOf(std.c.max_align_t));
-    const ptr = @ptrCast([*]u8, sqlite3_api.*.malloc64.?(len) orelse return error.OutOfMemory);
-    return ptr[0..len];
-}
-
-fn resize(
-    self: *Allocator,
-    buf: []u8,
-    old_align: u29,
-    new_len: usize,
-    len_align: u29,
-    ret_addr: usize,
-) Allocator.Error!usize {
-    _ = self;
-    _ = old_align;
-    _ = ret_addr;
-    if (new_len == 0) {
-        sqlite3_api.*.free.?(buf.ptr);
-        return 0;
-    }
-    if (new_len <= buf.len) {
-        return std.mem.alignAllocLen(buf.len, new_len, len_align);
-    }
-    return error.OutOfMemory;
-}
+// Allows to use a different allocator for testing
+// Idea from https://zig.news/geo_ant/low-ish-level-gpio-on-the-raspberry-pi-with-zig-1cn3
+// https://github.com/geo-ant/zigpio/blob/main/src/gpio.zig#L45
+var allocator: *std.mem.Allocator = undefined; 
 
 //
 // Cursor is a subclass of sqlite3_vtab_cursor which will
@@ -272,6 +239,7 @@ pub export fn sqlite3_templatevtab_init(db: ?*c.sqlite3, pzErrMsg: [*c][*c]u8, p
     _ = pzErrMsg;
     var rc: c_int = c.SQLITE_OK;
     sqlite3_api = pApi.?;
+    allocator = sqlite3_allocator.init(pApi.?);
     rc = sqlite3_api.*.create_module.?(db, "templatevtab", &templatevtabModule, null);
     return rc;
 }
